@@ -1,20 +1,41 @@
-import { Base } from "./base.js";
-import {
-  return_type,
-  argument_list,
-  unescape,
-  autoParenter,
-} from "./helpers.js";
+import { Base } from "./base";
+import { return_type, argument_list, unescape, autoParenter } from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { Argument } from "./argument";
+import { WebIDLErrorData } from "../error";
+import { Type } from "./type";
 
 export class CallbackFunction extends Base {
+  /** Object type. */
+  readonly type = "callback";
+
+  /** A list of arguments, as in function parameters. */
+  arguments!: Argument[];
+  /** An IDL Type for the callback function. */
+  idlType!: Type;
+  /** Recorded tokens. */
+  tokens!: {
+    arguments: Token;
+    assign: Token;
+    base: Token;
+    close: Token;
+    open: Token;
+    name: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating a CallbackFunction instance.
+   * @param tokeniser - Tokeniser instance.
+   * @param base - Base token.
    */
-  static parse(tokeniser, base) {
-    const tokens = { base };
+  static parse(tokeniser: Tokeniser, base: Token) {
+    const tokens: Record<string, Token | undefined> = { base };
     const ret = autoParenter(
       new CallbackFunction({ source: tokeniser.source, tokens }),
-    );
+    )!;
     tokens.name =
       tokeniser.consumeKind("identifier") ||
       tokeniser.error("Callback lacks a name");
@@ -35,23 +56,31 @@ export class CallbackFunction extends Base {
     return ret.this;
   }
 
-  get type() {
-    return "callback";
-  }
+  /** The callback function's name. */
   get name() {
     return unescape(this.tokens.name.value);
   }
 
-  *validate(defs) {
-    yield* this.extAttrs.validate(defs);
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
+    if (this.extAttrs) {
+      yield* this.extAttrs.validate(defs);
+    }
+
     yield* this.idlType.validate(defs);
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         w.token(this.tokens.base),
         w.name_token(this.tokens.name, { data: this }),
         w.token(this.tokens.assign),

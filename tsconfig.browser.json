@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist/browser",
+    "module": "ESNext" // or "ES2020"
+  }
+}

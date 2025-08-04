@@ -1,68 +1,88 @@
-/**
- * @param {string} text
- */
-function lastLine(text) {
+import { Token } from "./tokeniser";
+import { Base } from "./productions/index.js";
+
+export type ErrorLevel = "error" | "warning";
+
+export interface WebIDLError {
+  /** Raw error message. */
+  bareMessage: string;
+  /** Error message with context. */
+  message: string;
+
+  context: string;
+  /** The line where the error occurred. */
+  line: number;
+  /** The source file name. */
+  sourceName?: string;
+  /** A short peek at the text at the point where the error happened */
+  input: string;
+  /** The five tokens at the point of error, as understood by the tokeniser */
+  tokens: Token[];
+}
+
+export interface WebIDLErrorData extends WebIDLError {
+  /** The level of error */
+  level: ErrorLevel;
+
+  /** A function to automatically fix the error */
+  autofix?(): void;
+
+  /** The name of the rule that threw the error */
+  ruleName?: string;
+}
+
+function lastLine(text: string) {
   const splitted = text.split("\n");
   return splitted[splitted.length - 1];
 }
 
-function appendIfExist(base, target) {
-  let result = base;
-  if (target) {
-    result += ` ${target}`;
-  }
-  return result;
-}
-
-function contextAsText(node) {
-  const hierarchy = [node];
+function contextAsText(node: Base) {
+  const hierarchy: Base[] = [node];
   while (node && node.parent) {
     const { parent } = node;
     hierarchy.unshift(parent);
     node = parent;
   }
-  return hierarchy.map((n) => appendIfExist(n.type, n.name)).join(" -> ");
+  return hierarchy
+    .map((n) => {
+      // Maintains the previous behavior as there is no guarantee that name is defined
+      const name = "name" in n ? n.name : "undefined";
+      const type = "type" in n ? ` ${n.type}` : "";
+      return `${name}${type}`;
+    })
+    .join(" -> ");
 }
 
-/**
- * @typedef {object} WebIDL2ErrorOptions
- * @property {"error" | "warning"} [level]
- * @property {Function} [autofix]
- * @property {string} [ruleName]
- *
- * @typedef {ReturnType<typeof error>} WebIDLErrorData
- *
- * @param {string} message error message
- * @param {*} position
- * @param {*} current
- * @param {*} message
- * @param {"Syntax" | "Validation"} kind error type
- * @param {WebIDL2ErrorOptions=} options
- */
+export type WebIDL2ErrorType = "Syntax" | "Validation";
+export type WebIDL2ErrorLevel = "error" | "warning";
+
+interface WebIDL2ErrorOptions {
+  level?: WebIDL2ErrorLevel;
+  autofix?: () => void;
+  ruleName?: string;
+}
+
 function error(
-  source,
-  position,
-  current,
-  message,
-  kind,
-  { level = "error", autofix, ruleName } = {},
-) {
+  source: Token[] & { name?: string },
+  position: number,
+  current: Base | null | undefined,
+  message: string,
+  kind: WebIDL2ErrorType,
+  { level = "error", autofix, ruleName }: WebIDL2ErrorOptions = {},
+): WebIDLErrorData {
   /**
-   * @param {number} count
+   * @param count - Number of tokens to slice.
    */
-  function sliceTokens(count) {
+  function sliceTokens(count: number) {
     return count > 0
       ? source.slice(position, position + count)
       : source.slice(Math.max(position + count, 0), position);
   }
 
-  /**
-   * @param {import("./tokeniser.js").Token[]} inputs
-   * @param {object} [options]
-   * @param {boolean} [options.precedes]
-   * @returns
-   */
-  function tokensToText(inputs, { precedes } = {}) {
+  function tokensToText(
+    inputs: Token[],
+    { precedes }: { precedes?: boolean } = {},
+  ) {
     const text = inputs.map((t) => t.trivia + t.value).join("");
     const nextToken = source[position];
     if (nextToken.type === "eof") {
@@ -95,12 +115,13 @@ function error(
 
   const contextType = kind === "Syntax" ? "since" : "inside";
   const inSourceName = source.name ? ` in ${source.name}` : "";
-  const grammaticalContext =
-    current && current.name
-      ? `, ${contextType} \`${current.partial ? "partial " : ""}${contextAsText(
-          current,
-        )}\``
-      : "";
+  let grammaticalContext = "";
+  if (current && "name" in current && typeof current.name === "string") {
+    const partial = "partial" in current ? "partial " : "";
+    grammaticalContext = `, ${contextType} \`${partial}${contextAsText(
+      current,
+    )}\``;
+  }
   const context = `${kind} error at line ${line}${inSourceName}${grammaticalContext}:\n${sourceContext}`;
   return {
     message: `${context} ${message}`,
@@ -116,23 +137,21 @@ function error(
   };
 }
 
-/**
- * @param {string} message error message
- */
-export function syntaxError(source, position, current, message) {
+export function syntaxError(
+  source: Token[],
+  position: number,
+  current: null | undefined | Base,
+  message: string,
+): WebIDLError {
   return error(source, position, current, message, "Syntax");
 }
 
-/**
- * @param {string} message error message
- * @param {WebIDL2ErrorOptions} [options]
- */
 export function validationError(
-  token,
-  current,
-  ruleName,
-  message,
-  options = {},
+  token: Token,
+  current: Base,
+  ruleName: string,
+  message: string,
+  options: WebIDL2ErrorOptions = {},
 ) {
   options.ruleName = ruleName;
   return error(

@@ -1,24 +1,42 @@
-import { Container } from "./container.js";
-import { Constant } from "./constant.js";
-import { Attribute } from "./attribute.js";
-import { Operation } from "./operation.js";
-import { stringifier } from "./helpers.js";
+import { AllowedMember, Container } from "./container";
+import { Constant } from "./constant";
+import { Attribute } from "./attribute";
+import { Operation } from "./operation";
+import { stringifier } from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
 
 export class Mixin extends Container {
+  /** Object type. */
+  readonly type = "mixin";
+
+  /** Mixin members. */
+  members!: (Attribute | Constant | Operation)[];
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
-   * @param {import("../tokeniser.js").Token} base
-   * @param {object} [options]
-   * @param {import("./container.js").AllowedMember[]} [options.extMembers]
-   * @param {import("../tokeniser.js").Token} [options.partial]
+   * Factory function for creating a Mixin instance.
+   * @param tokeniser - Tokeniser instance.
+   * @param base - Identifier token.
+   * @param opts - Mixin parse options.
+   * @param opts.extMembers - Array of factory functions for non-standard members.
+   * @param opts.partial - A boolean indicating whether this Interface is partial.
    */
-  static parse(tokeniser, base, { extMembers = [], partial } = {}) {
-    const tokens = { partial, base };
+  static parse(
+    tokeniser: Tokeniser,
+    base: Token,
+    {
+      extMembers = [],
+      partial,
+    }: {
+      extMembers?: AllowedMember[];
+      partial?: Token;
+    } = {},
+  ) {
+    const tokens: Record<string, Token | undefined> = { partial, base };
     tokens.mixin = tokeniser.consume("mixin");
     if (!tokens.mixin) {
       return;
     }
-    return Container.parse(
+    return Container._parse(
       tokeniser,
       new Mixin({ source: tokeniser.source, tokens }),
       {
@@ -31,9 +49,5 @@ export class Mixin extends Container {
         ],
       },
     );
-  }
-
-  get type() {
-    return "interface mixin";
   }
 }

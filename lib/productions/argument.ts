@@ -1,36 +1,65 @@
-import { Base } from "./base.js";
-import { Default } from "./default.js";
-import { ExtendedAttributes } from "./extended-attributes.js";
+import { Base } from "./base";
+import { Default } from "./default";
 import {
-  unescape,
-  type_with_extended_attributes,
+  ExtendedAttributeParameters,
+  ExtendedAttributes,
+} from "./extended-attributes";
+import {
   autoParenter,
   getFirstToken,
-} from "./helpers.js";
-import { argumentNameKeywords, Tokeniser } from "../tokeniser.js";
-import { validationError } from "../error.js";
+  type_with_extended_attributes,
+  unescape,
+} from "./helpers";
+import { argumentNameKeywords, Token, Tokeniser } from "../tokeniser";
+import { validationError, WebIDLErrorData } from "../error";
 import {
-  idlTypeIncludesDictionary,
   dictionaryIncludesRequiredField,
-} from "../validators/helpers.js";
+  idlTypeIncludesDictionary,
+} from "../validators/helpers";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { Constructor } from "./constructor";
+import { Operation } from "./operation";
+import { CallbackFunction } from "./callback";
+import { IterableLike } from "./iterable";
+import { Type } from "./type";
 
 export class Argument extends Base {
+  /** Object type. */
+  readonly type = "argument";
+
+  /** Default values. */
+  default!: Default | null;
+  /** A list of extended attributes. */
+  extAttrs!: ExtendedAttributes;
+  /** An IDL Type describing the type of the argument. */
+  idlType!: Type;
+  /** Recorded tokens. */
+  tokens!: {
+    name: Token;
+    optional: Token;
+    separator: Token;
+    variadic: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating an Argument instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
+  static parse(tokeniser: Tokeniser) {
     const start_position = tokeniser.position;
-    /** @type {Base["tokens"]} */
-    const tokens = {};
+    const tokens: Record<string, Token | undefined> = {};
     const ret = autoParenter(
       new Argument({ source: tokeniser.source, tokens }),
-    );
+    )!;
     ret.extAttrs = ExtendedAttributes.parse(tokeniser);
     tokens.optional = tokeniser.consume("optional");
-    ret.idlType = type_with_extended_attributes(tokeniser, "argument-type");
-    if (!ret.idlType) {
+
+    const type = type_with_extended_attributes(tokeniser, "argument-type");
+    if (!type) {
       return tokeniser.unconsume(start_position);
     }
+    ret.idlType = type;
     if (!tokens.optional) {
       tokens.variadic = tokeniser.consume("...");
     }
@@ -44,23 +73,26 @@ export class Argument extends Base {
     return ret.this;
   }
 
-  get type() {
-    return "argument";
-  }
+  /** True if the argument is optional. */
   get optional() {
     return !!this.tokens.optional;
   }
+
+  /** True if the argument is variadic. */
   get variadic() {
     return !!this.tokens.variadic;
   }
+
+  /** The argument's name. */
   get name() {
     return unescape(this.tokens.name.value);
   }
 
   /**
-   * @param {import("../validator.js").Definitions} defs
+   * Validate the object.
+   * @param defs - All parsed object definitions.
    */
-  *validate(defs) {
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     yield* this.extAttrs.validate(defs);
     yield* this.idlType.validate(defs);
     const result = idlTypeIncludesDictionary(this.idlType, defs, {
@@ -107,8 +139,11 @@ export class Argument extends Base {
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     return w.ts.wrap([
       this.extAttrs.write(w),
       w.token(this.tokens.optional),
@@ -122,19 +157,32 @@ export class Argument extends Base {
 }
 
 /**
- * @param {Argument} arg
+ * Determines if the given argument is the last required argument in its list.
+ * @param arg - Argument instance.
  */
-function isLastRequiredArgument(arg) {
-  const list = arg.parent.arguments || arg.parent.list;
-  const index = list.indexOf(arg);
-  const requiredExists = list.slice(index + 1).some((a) => !a.optional);
-  return !requiredExists;
+function isLastRequiredArgument(arg: Argument) {
+  if (arg.parent) {
+    const parent = arg.parent as unknown as
+      | CallbackFunction
+      | Constructor
+      | ExtendedAttributeParameters
+      | IterableLike
+      | Operation;
+    const list =
+      "arguments" in parent ? parent.arguments : (parent.list as Argument[]);
+    const index = list.indexOf(arg);
+    const requiredExists = list
+      .slice(index + 1)
+      .some((a: Argument) => !a.optional);
+    return !requiredExists;
+  }
 }
 
 /**
- * @param {Argument} arg
+ * Autofix to set an argument as optional.
+ * @param arg - Argument instance.
  */
-function autofixDictionaryArgumentOptionality(arg) {
+function autofixDictionaryArgumentOptionality(arg: Argument) {
   return () => {
     const firstToken = getFirstToken(arg.idlType);
     arg.tokens.optional = {
@@ -148,9 +196,10 @@ function autofixDictionaryArgumentOptionality(arg) {
 }
 
 /**
- * @param {Argument} arg
+ * Autofix to set the value for an optional dictionary argument.
+ * @param arg - Argument instance.
  */
-function autofixOptionalDictionaryDefaultValue(arg) {
+function autofixOptionalDictionaryDefaultValue(arg: Argument) {
   return () => {
     arg.default = Default.parse(new Tokeniser(" = {}"));
   };

@@ -1,16 +1,29 @@
-import { Base } from "./base.js";
-import { unescape } from "./helpers.js";
+import { Base } from "./base";
+import { unescape } from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
 
 export class Includes extends Base {
+  /** Object type. */
+  readonly type = "includes";
+
+  /** Recorded tokens. */
+  tokens!: Record<string, Token | undefined> & {
+    mixin: Token;
+    target: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating an Includes instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
+  static parse(tokeniser: Tokeniser) {
     const target = tokeniser.consumeKind("identifier");
     if (!target) {
       return;
     }
-    const tokens = { target };
+    const tokens: Record<string, Token | undefined> = { target };
     tokens.includes = tokeniser.consume("includes");
     if (!tokens.includes) {
       tokeniser.unconsume(target.index);
@@ -25,21 +38,24 @@ export class Includes extends Base {
     return new Includes({ source: tokeniser.source, tokens });
   }
 
-  get type() {
-    return "includes";
-  }
+  /** The interface that includes an interface mixin. */
   get target() {
     return unescape(this.tokens.target.value);
   }
+
+  /** The interface mixin that is being included by the target. */
   get includes() {
     return unescape(this.tokens.mixin.value);
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         w.reference_token(this.tokens.target, this),
         w.token(this.tokens.includes),
         w.reference_token(this.tokens.mixin, this),

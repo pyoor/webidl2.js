@@ -1,10 +1,10 @@
 const path = require("path");
 const TerserPlugin = require("terser-webpack-plugin");
 module.exports = {
-  entry: "./index.js",
+  entry: "./dist/browser/index.js",
   output: {
     filename: "webidl2.js",
-    path: path.resolve(__dirname, "dist"),
+    path: path.resolve(__dirname, "dist/browser"),
     library: "WebIDL2",
     libraryTarget: "umd",
     globalObject: "globalThis",

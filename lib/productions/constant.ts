@@ -1,20 +1,36 @@
-import { Base } from "./base.js";
-import { Type } from "./type.js";
+import { Base } from "./base";
+import { Type } from "./type";
 import {
   const_data,
   const_value,
   primitive_type,
   autoParenter,
   unescape,
-} from "./helpers.js";
+} from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
 
 export class Constant extends Base {
+  /** Object type. */
+  readonly type = "const";
+
+  /** An IDL Type for the constant. */
+  idlType!: Type;
+  /** Recorded tokens. */
+  tokens!: {
+    assign: Token;
+    base: Token;
+    name: Token;
+    value: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating a Constant instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
-    /** @type {Base["tokens"]} */
-    const tokens = {};
+  static parse(tokeniser: Tokeniser) {
+    const tokens: Record<string, Token | undefined> = {};
     tokens.base = tokeniser.consume("const");
     if (!tokens.base) {
       return;
@@ -40,27 +56,32 @@ export class Constant extends Base {
     tokens.termination =
       tokeniser.consume(";") ||
       tokeniser.error("Unterminated const, expected `;`");
-    const ret = new Constant({ source: tokeniser.source, tokens });
-    autoParenter(ret).idlType = idlType;
+    const ret = autoParenter(
+      new Constant({ source: tokeniser.source, tokens }),
+    )!;
+    ret.idlType = idlType;
     return ret;
   }
 
-  get type() {
-    return "const";
-  }
+  /** The constant's name. */
   get name() {
     return unescape(this.tokens.name.value);
   }
+
+  /** The constant's value */
   get value() {
     return const_data(this.tokens.value);
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     const { parent } = this;
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         w.token(this.tokens.base),
         w.ts.type(this.idlType.write(w)),
         w.name_token(this.tokens.name, { data: this, parent }),

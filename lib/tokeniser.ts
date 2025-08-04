@@ -1,5 +1,16 @@
-import { syntaxError } from "./error.js";
-import { unescape } from "./productions/helpers.js";
+import { syntaxError, WebIDLError } from "./error";
+import { Base, unescape } from "./productions/index.js";
+
+export interface Token {
+  /** Token type. */
+  type: string;
+  /** Token value. */
+  value: string;
+  /** Token trivia. */
+    trivia: string;
+  line: number;
+  index: number;
+}
 
 // These regular expressions use the sticky flag so they will only match at
 // the current location (ie. the offset of lastIndex).
@@ -119,12 +130,8 @@ const reserved = [
   "_toString",
 ];
 
-/**
- * @typedef {ArrayItemType<ReturnType<typeof tokenise>>} Token
- * @param {string} str
- */
-function tokenise(str) {
-  const tokens = [];
+function tokenise(str: string) {
+  const tokens: Token[] = [];
   let lastCharIndex = 0;
   let trivia = "";
   let line = 1;
@@ -140,7 +147,7 @@ function tokenise(str) {
     }
 
     if (result !== -1) {
-      const currentTrivia = tokens.pop().value;
+      const currentTrivia = (tokens.pop() as Token).value;
       line += (currentTrivia.match(/\n/g) || []).length;
       trivia += currentTrivia;
       index -= 1;
@@ -208,12 +215,10 @@ function tokenise(str) {
 
   return tokens;
 
-  /**
-   * @param {keyof typeof tokenRe} type
-   * @param {object} options
-   * @param {boolean} [options.noFlushTrivia]
-   */
-  function attemptTokenMatch(type, { noFlushTrivia } = {}) {
+  function attemptTokenMatch(
+    type: keyof typeof tokenRe,
+    { noFlushTrivia }: { noFlushTrivia?: boolean } = {},
+  ) {
     const re = tokenRe[type];
     re.lastIndex = lastCharIndex;
     const result = re.exec(str);
@@ -229,47 +234,35 @@ function tokenise(str) {
 }
 
 export class Tokeniser {
-  /**
-   * @param {string} idl
-   */
-  constructor(idl) {
+  source: Token[] & { name?: string };
+  position: number;
+  current: undefined | Base;
+
+  constructor(idl: string) {
     this.source = tokenise(idl);
     this.position = 0;
   }
 
-  /**
-   * @param {string} message
-   * @return {never}
-   */
-  error(message) {
+  error(message: string): never {
     throw new WebIDLParseError(
       syntaxError(this.source, this.position, this.current, message),
     );
   }
 
-  /**
-   * @param {string} type
-   */
-  probeKind(type) {
+  probeKind(type: string): boolean {
     return (
       this.source.length > this.position &&
       this.source[this.position].type === type
     );
   }
 
-  /**
-   * @param {string} value
-   */
-  probe(value) {
+  probe(value: string): boolean {
     return (
       this.probeKind("inline") && this.source[this.position].value === value
     );
   }
 
-  /**
-   * @param {...string} candidates
-   */
-  consumeKind(...candidates) {
+  consumeKind(...candidates: string[]): Token | undefined {
     for (const type of candidates) {
       if (!this.probeKind(type)) continue;
       const token = this.source[this.position];
@@ -278,10 +271,7 @@ export class Tokeniser {
     }
   }
 
-  /**
-   * @param {...string} candidates
-   */
-  consume(...candidates) {
+  consume(...candidates: string[]): Token | undefined {
     if (!this.probeKind("inline")) return;
     const token = this.source[this.position];
     for (const value of candidates) {
@@ -291,10 +281,7 @@ export class Tokeniser {
     }
   }
 
-  /**
-   * @param {string} value
-   */
-  consumeIdentifier(value) {
+  consumeIdentifier(value: string): Token | undefined {
     if (!this.probeKind("identifier")) {
       return;
     }
@@ -304,15 +291,19 @@ export class Tokeniser {
     return this.consumeKind("identifier");
   }
 
-  /**
-   * @param {number} position
-   */
-  unconsume(position) {
+  unconsume(position: number): void {
     this.position = position;
   }
 }
 
 export class WebIDLParseError extends Error {
+  bareMessage: string;
+  context: string;
+  line: number;
+  sourceName: unknown;
+  input: string;
+  tokens: Token[];
+
   /**
    * @param {object} options
    * @param {string} options.message
@@ -331,7 +322,7 @@ export class WebIDLParseError extends Error {
     sourceName,
     input,
     tokens,
-  }) {
+  }: WebIDLError) {
     super(message);
 
     this.name = "WebIDLParseError"; // not to be mangled

@@ -1,21 +1,32 @@
-import { Container } from "./container.js";
-import { Operation } from "./operation.js";
-import { Constant } from "./constant.js";
+import { AllowedMember, Container } from "./container";
+import { Operation } from "./operation";
+import { Constant } from "./constant";
+import { Token, Tokeniser } from "../tokeniser";
 
 export class CallbackInterface extends Container {
+  /** Object type. */
+  readonly type = "callback-interface";
+
+  /** Callback interface members. */
+  members!: (Constant | Operation)[];
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
-   * @param {*} callback
-   * @param {object} [options]
-   * @param {import("./container.js").AllowedMember[]} [options.extMembers]
+   * Factory function for creating a CallbackInterface instance.
+   * @param tokeniser - Tokeniser instance.
+   * @param callback - Callback token.
+   * @param extMembers - Array of factory functions for non-standard members.
    */
-  static parse(tokeniser, callback, { extMembers = [] } = {}) {
-    const tokens = { callback };
+  static parse(
+    tokeniser: Tokeniser,
+    callback: Token,
+    { extMembers = [] }: { extMembers?: AllowedMember[] } = {},
+  ): CallbackInterface | undefined {
+    const tokens: Record<string, Token | undefined> = { callback };
     tokens.base = tokeniser.consume("interface");
     if (!tokens.base) {
       return;
     }
-    return Container.parse(
+    return Container._parse(
       tokeniser,
       new CallbackInterface({ source: tokeniser.source, tokens }),
       {
@@ -26,9 +37,5 @@ export class CallbackInterface extends Container {
         ],
       },
     );
-  }
-
-  get type() {
-    return "callback interface";
   }
 }

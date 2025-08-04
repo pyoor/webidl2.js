@@ -1,29 +1,48 @@
-import { Type } from "./type.js";
-import { Argument } from "./argument.js";
+import { Type } from "./type";
+import { Argument } from "./argument";
 import {
   ExtendedAttributes,
   SimpleExtendedAttribute,
-} from "./extended-attributes.js";
-import { Operation } from "./operation.js";
-import { Attribute } from "./attribute.js";
-import { Tokeniser } from "../tokeniser.js";
+} from "./extended-attributes";
+import { Operation } from "./operation";
+import { Attribute } from "./attribute";
+import { Token, Tokeniser } from "../tokeniser";
+import { Interface } from "./interface";
+
+import { Base } from "./base";
+import { Container } from "./container";
+import { Constant } from "./constant";
+import { Constructor } from "./constructor";
+import { IterableLike } from "./iterable";
 
 /**
- * @param {string} identifier
+ * Strip preceding underscore.
+ * @param identifier - Identifier.
  */
-export function unescape(identifier) {
+export function unescape(identifier: string) {
   return identifier.startsWith("_") ? identifier.slice(1) : identifier;
 }
 
 /**
  * Parses comma-separated list
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {object} args
- * @param {Function} args.parser parser function for each item
- * @param {boolean} [args.allowDangler] whether to allow dangling comma
- * @param {string} [args.listName] the name to be shown on error messages
+ * @param tokeniser
+ * @param args
+ * @param args.parser parser function for each item
+ * @param [args.allowDangler] whether to allow dangling comma
+ * @param [args.listName] the name to be shown on error messages
  */
-export function list(tokeniser, { parser, allowDangler, listName = "list" }) {
+export function list<T extends Base>(
+  tokeniser: Tokeniser,
+  {
+    parser,
+    allowDangler,
+    listName = "list",
+  }: {
+    parser: (arg: Tokeniser) => T | void;
+    allowDangler?: boolean;
+    listName?: string;
+  },
+) {
   const first = parser(tokeniser);
   if (!first) {
     return [];
@@ -45,22 +64,14 @@ export function list(tokeniser, { parser, allowDangler, listName = "list" }) {
   return items;
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- */
-export function const_value(tokeniser) {
+export function const_value(tokeniser: Tokeniser) {
   return (
     tokeniser.consumeKind("decimal", "integer") ||
     tokeniser.consume("true", "false", "Infinity", "-Infinity", "NaN")
   );
 }
 
-/**
- * @param {object} token
- * @param {string} token.type
- * @param {string} token.value
- */
-export function const_data({ type, value }) {
+export function const_data({ type, value }: Pick<Token, "type" | "value">) {
   switch (type) {
     case "decimal":
     case "integer":
@@ -85,10 +96,7 @@ export function const_data({ type, value }) {
   }
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- */
-export function primitive_type(tokeniser) {
+export function primitive_type(tokeniser: Tokeniser): Type | undefined {
   function integer_type() {
     const prefix = tokeniser.consume("unsigned");
     const base = tokeniser.consume("short", "long");
@@ -99,7 +107,7 @@ export function primitive_type(tokeniser) {
     if (prefix) tokeniser.error("Failed to parse integer type");
   }
 
-  function decimal_type() {
+  function decimal_type(): Type | undefined {
     const prefix = tokeniser.consume("unrestricted");
     const base = tokeniser.consume("float", "double");
     if (base) {
@@ -123,32 +131,24 @@ export function primitive_type(tokeniser) {
   }
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- */
-export function argument_list(tokeniser) {
-  return list(tokeniser, {
+export function argument_list(tokeniser: Tokeniser) {
+  return list<Argument>(tokeniser, {
     parser: Argument.parse,
     listName: "arguments list",
   });
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {string=} typeName (TODO: See Type.type for more details)
- */
-export function type_with_extended_attributes(tokeniser, typeName) {
+export function type_with_extended_attributes(
+  tokeniser: Tokeniser,
+  typeName?: string,
+) {
   const extAttrs = ExtendedAttributes.parse(tokeniser);
   const ret = Type.parse(tokeniser, typeName);
-  if (ret) autoParenter(ret).extAttrs = extAttrs;
+  if (ret) autoParenter(ret)!.extAttrs = extAttrs;
   return ret;
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {string=} typeName (TODO: See Type.type for more details)
- */
-export function return_type(tokeniser, typeName) {
+export function return_type(tokeniser: Tokeniser, typeName?: string) {
   const typ = Type.parse(tokeniser, typeName || "return-type");
   if (typ) {
     return typ;
@@ -164,23 +164,17 @@ export function return_type(tokeniser, typeName) {
   }
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- */
-export function stringifier(tokeniser) {
+export function stringifier(tokeniser: Tokeniser) {
   const special = tokeniser.consume("stringifier");
   if (!special) return;
-  const member =
+  return (
     Attribute.parse(tokeniser, { special }) ||
     Operation.parse(tokeniser, { special }) ||
-    tokeniser.error("Unterminated stringifier");
-  return member;
+    tokeniser.error("Unterminated stringifier")
+  );
 }
 
-/**
- * @param {string} str
- */
-export function getLastIndentation(str) {
+export function getLastIndentation(str: string) {
   const lines = str.split("\n");
   // the first line visually binds to the preceding token
   if (lines.length) {
@@ -192,23 +186,19 @@ export function getLastIndentation(str) {
   return "";
 }
 
-/**
- * @param {string} parentTrivia
- */
-export function getMemberIndentation(parentTrivia) {
+export function getMemberIndentation(parentTrivia: string) {
   const indentation = getLastIndentation(parentTrivia);
   const indentCh = indentation.includes("\t") ? "\t" : "  ";
   return indentation + indentCh;
 }
 
-/**
- * @param {import("./interface.js").Interface} def
- */
-export function autofixAddExposedWindow(def) {
+export function autofixAddExposedWindow(def: Container) {
   return () => {
-    if (def.extAttrs.length) {
+    if (def.extAttrs && def.extAttrs.length) {
       const tokeniser = new Tokeniser("Exposed=Window,");
-      const exposed = SimpleExtendedAttribute.parse(tokeniser);
+      const exposed = SimpleExtendedAttribute.parse(
+        tokeniser,
+      ) as SimpleExtendedAttribute;
       exposed.tokens.separator = tokeniser.consume(",");
       const existing = def.extAttrs[0];
       if (!/^\s/.test(existing.tokens.name.trivia)) {
@@ -216,11 +206,11 @@ export function autofixAddExposedWindow(def) {
       }
       def.extAttrs.unshift(exposed);
     } else {
-      autoParenter(def).extAttrs = ExtendedAttributes.parse(
+      autoParenter(def)!.extAttrs = ExtendedAttributes.parse(
         new Tokeniser("[Exposed=Window]"),
       );
       const trivia = def.tokens.base.trivia;
-      def.extAttrs.tokens.open.trivia = trivia;
+      def.extAttrs!.tokens.open!.trivia = trivia;
       def.tokens.base.trivia = `\n${getLastIndentation(trivia)}`;
     }
   };
@@ -230,14 +220,18 @@ export function autofixAddExposedWindow(def) {
  * Get the first syntax token for the given IDL object.
  * @param {*} data
  */
-export function getFirstToken(data) {
-  if (data.extAttrs.length) {
+export function getFirstToken(
+  data: Attribute | Constant | Constructor | IterableLike | Operation | Type,
+) {
+  if (data.extAttrs && data.extAttrs.length && data.extAttrs.tokens.open) {
     return data.extAttrs.tokens.open;
   }
-  if (data.type === "operation" && !data.special) {
+  if (data instanceof Operation && !data.special) {
     return getFirstToken(data.idlType);
   }
-  const tokens = Object.values(data.tokens).sort((x, y) => x.index - y.index);
+  const tokens = Object.values(data.tokens)
+    .filter((t): t is Token => t !== undefined)
+    .sort((x, y) => x.index - y.index);
   return tokens[0];
 }
 
@@ -246,7 +240,7 @@ export function getFirstToken(data) {
  * @param {T[]} array
  * @param {(item: T) => boolean} predicate
  */
-export function findLastIndex(array, predicate) {
+export function findLastIndex<T>(array: T[], predicate: (item: T) => boolean) {
   const index = array.slice().reverse().findIndex(predicate);
   if (index === -1) {
     return index;
@@ -259,46 +253,66 @@ export function findLastIndex(array, predicate) {
  * @template {Record<string | symbol, any>} T
  * @param {T} data
  * @param {*} [parent] The object that will be assigned to `parent`.
- *                     If absent, it will be `data` by default.
+ *                    If absent, it will be `data` by default.
  * @return {T}
  */
-export function autoParenter(data, parent) {
+export function autoParenter<T extends object>(
+  data: T | undefined,
+  parent?: unknown,
+): T | undefined {
   if (!parent) {
     // Defaults to `data` unless specified otherwise.
     parent = data;
   }
   if (!data) {
+    // ToDo: Is the following really necessary?  If so, it forces us to cast
+    //  or check the return value of autoParenter every time.
     // This allows `autoParenter(undefined)` which again allows
     // `autoParenter(parse())` where the function may return nothing.
     return data;
   }
-  const proxy = new Proxy(data, {
-    get(target, p) {
-      const value = target[p];
-      if (Array.isArray(value) && p !== "source") {
-        // Wraps the array so that any added items will also automatically
-        // get their `parent` values.
-        return autoParenter(value, target);
+
+  return new Proxy(data, {
+    get(target, p: string | symbol, _receiver: unknown): unknown {
+      if (typeof p === "string" && p in target) {
+        const value = target[p as keyof T];
+        if (Array.isArray(value) && p !== "source") {
+          // Wraps the array so that any added items will also automatically
+          // get their `parent` values.
+          return autoParenter(value, target);
+        }
+        return value;
       }
-      return value;
+
+      // fallback for symbol or unknown keys
+      return Reflect.get(target, p);
     },
-    set(target, p, value) {
-      // @ts-ignore https://github.com/microsoft/TypeScript/issues/47357
-      target[p] = value;
-      if (!value) {
-        return true;
-      } else if (Array.isArray(value)) {
-        // Assigning an array will add `parent` to its items.
+
+    set(
+      target,
+      p: string | symbol,
+      value: unknown,
+      _receiver: unknown,
+    ): boolean {
+      if (typeof p === "string") {
+        (target as T)[p as keyof T] = value as T[keyof T];
+      } else {
+        Reflect.set(target, p, value);
+      }
+
+      if (!value) return true;
+
+      if (Array.isArray(value)) {
         for (const item of value) {
-          if (typeof item.parent !== "undefined") {
-            item.parent = parent;
+          if (item && typeof item === "object" && "parent" in item) {
+            (item as { parent: unknown }).parent = parent;
           }
         }
-      } else if (typeof value.parent !== "undefined") {
-        value.parent = parent;
+      } else if (typeof value === "object" && "parent" in value) {
+        (value as { parent: unknown }).parent = parent;
       }
+
       return true;
     },
   });
-  return proxy;
 }

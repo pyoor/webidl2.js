@@ -1,42 +1,74 @@
-import { Tokeniser } from "./tokeniser.js";
-import { Enum } from "./productions/enum.js";
-import { Includes } from "./productions/includes.js";
-import { ExtendedAttributes } from "./productions/extended-attributes.js";
-import { Typedef } from "./productions/typedef.js";
-import { CallbackFunction } from "./productions/callback.js";
-import { Interface } from "./productions/interface.js";
-import { Mixin } from "./productions/mixin.js";
-import { Dictionary } from "./productions/dictionary.js";
-import { Namespace } from "./productions/namespace.js";
-import { CallbackInterface } from "./productions/callback-interface.js";
-import { autoParenter } from "./productions/helpers.js";
-import { Eof } from "./productions/token.js";
+import { Token, Tokeniser } from "./tokeniser";
+import { Enum } from "./productions/enum";
+import { Includes } from "./productions/includes";
+import {
+  ExtendedAttributes,
+} from "./productions/index.js";
+import { Typedef } from "./productions/typedef";
+import { CallbackFunction } from "./productions/callback";
+import { Interface } from "./productions/interface";
+import { Mixin } from "./productions/mixin";
+import { Dictionary } from "./productions/dictionary";
+import { Namespace } from "./productions/namespace";
+import { CallbackInterface } from "./productions/callback-interface";
+import { autoParenter } from "./productions/index.js";
+import { Eof } from "./productions/token";
+import { AllowedMember } from "./productions/container";
+import { Writer } from "./writer";
 
-/** @typedef {'callbackInterface'|'dictionary'|'interface'|'mixin'|'namespace'} ExtendableInterfaces */
-/** @typedef {{ extMembers?: import("./productions/container.js").AllowedMember[]}} Extension */
-/** @typedef {Partial<Record<ExtendableInterfaces, Extension>>} Extensions */
+export type IDLRootType =
+  | CallbackFunction
+  | CallbackInterface
+  | Dictionary
+  | Enum
+  | Includes
+  | Mixin
+  | Interface
+  | Namespace
+  | Typedef;
 
-/**
- * Parser options.
- * @typedef {Object} ParserOptions
- * @property {string} [sourceName]
- * @property {boolean} [concrete]
- * @property {Function[]} [productions]
- * @property {Extensions} [extensions]
- */
+export type IDLRootNamedType = Exclude<IDLRootType, Includes>;
 
-/**
- * @param {Tokeniser} tokeniser
- * @param {ParserOptions} options
- */
-function parseByTokens(tokeniser, options) {
+export type ExtendableInterfaces =
+  | "callbackInterface"
+  | "dictionary"
+  | "interface"
+  | "mixin"
+  | "namespace";
+
+export type Extension = {
+  extMembers?: AllowedMember[];
+};
+
+type Extensions = Partial<Record<ExtendableInterfaces, Extension>>;
+
+interface CustomProduction {
+  extAttrs?: ExtendedAttributes;
+
+  write(w: Writer): string;
+}
+
+type CustomProductionFactory = (tokeniser: Tokeniser) => CustomProduction;
+
+export interface ParseOptions {
+  /** Boolean indicating whether the result should include EOF node or not. */
+  concrete?: boolean;
+  /** The source name, typically a filename. Errors and validation objects can indicate their origin if you pass a value. */
+  sourceName?: string;
+  /** Extensions. */
+  extensions?: Extensions;
+  /** Custom productions. */
+  productions?: CustomProductionFactory[];
+}
+
+function parseByTokens(tokeniser: Tokeniser, options: ParseOptions) {
   const source = tokeniser.source;
 
-  function error(str) {
+  function error(str: string) {
     tokeniser.error(str);
   }
 
-  function consume(...candidates) {
+  function consume(...candidates: string[]): Token | undefined {
     return tokeniser.consume(...candidates);
   }
 
@@ -51,7 +83,7 @@ function parseByTokens(tokeniser, options) {
     return CallbackFunction.parse(tokeniser, callback);
   }
 
-  function interface_(opts) {
+  function interface_(opts?: { partial: Token }) {
     const base = consume("interface");
     if (!base) return;
     return (
@@ -84,7 +116,7 @@ function parseByTokens(tokeniser, options) {
     );
   }
 
-  function definition() {
+  function definition(): CustomProduction | IDLRootType | undefined {
     if (options.productions) {
       for (const production of options.productions) {
         const result = production(tokeniser);
@@ -108,7 +140,7 @@ function parseByTokens(tokeniser, options) {
 
   function definitions() {
     if (!source.length) return [];
-    const defs = [];
+    const defs: (CustomProduction | IDLRootType | Eof)[] = [];
     while (true) {
       const ea = ExtendedAttributes.parse(tokeniser);
       const def = definition();
@@ -116,11 +148,11 @@ function parseByTokens(tokeniser, options) {
         if (ea.length) error("Stray extended attributes");
         break;
       }
-      autoParenter(def).extAttrs = ea;
+      autoParenter(def)!.extAttrs = ea;
       defs.push(def);
     }
     const eof = Eof.parse(tokeniser);
-    if (options.concrete) {
+    if (options.concrete && eof) {
       defs.push(eof);
     }
     return defs;
@@ -132,13 +164,13 @@ function parseByTokens(tokeniser, options) {
 }
 
 /**
- * @param {string} str
- * @param {ParserOptions} [options]
+ * Parser WebIDL text content into an AST.
+ * @param str - WebIDL input.
+ * @param options - Parsing options.
  */
-export function parse(str, options = {}) {
+export function parse(str: string, options: ParseOptions = {}) {
   const tokeniser = new Tokeniser(str);
   if (typeof options.sourceName !== "undefined") {
-    // @ts-ignore (See Tokeniser.source in supplement.d.ts)
     tokeniser.source.name = options.sourceName;
   }
   return parseByTokens(tokeniser, options);

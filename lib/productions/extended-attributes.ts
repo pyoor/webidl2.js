@@ -1,17 +1,17 @@
-import { Base } from "./base.js";
-import { ArrayBase } from "./array-base.js";
-import { WrappedToken } from "./token.js";
-import { list, argument_list, autoParenter, unescape } from "./helpers.js";
-import { validationError } from "../error.js";
+import { Base } from "./base";
+import { ArrayBase } from "./array-base";
+import { WrappedToken } from "./token";
+import { list, argument_list, autoParenter, unescape } from "./helpers";
+import { validationError, WebIDLErrorData } from "../error";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
+import { Argument } from "./argument";
+import { Definitions } from "../validator";
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {string} tokenName
- */
-function tokens(tokeniser, tokenName) {
-  return list(tokeniser, {
+function tokens(tokeniser: Tokeniser, tokenName: string) {
+  return list<WrappedToken>(tokeniser, {
     parser: WrappedToken.parser(tokeniser, tokenName),
-    listName: tokenName + " list",
+    listName: `${tokenName} list`,
   });
 }
 
@@ -26,19 +26,13 @@ const shouldBeLegacyPrefixed = [
 ];
 
 const renamedLegacies = new Map([
-  .../** @type {[string, string][]} */ (
-    shouldBeLegacyPrefixed.map((name) => [name, `Legacy${name}`])
-  ),
+  shouldBeLegacyPrefixed.map((name) => [name, `Legacy${name}`]),
   ["NamedConstructor", "LegacyFactoryFunction"],
   ["OverrideBuiltins", "LegacyOverrideBuiltIns"],
   ["TreatNullAs", "LegacyNullToEmptyString"],
-]);
+] as [string, string][]);
 
-/**
- * This will allow a set of extended attribute values to be parsed.
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- */
-function extAttrListItems(tokeniser) {
+function extAttrListItems(tokeniser: Tokeniser) {
   for (const syntax of extAttrValueSyntax) {
     const toks = tokens(tokeniser, syntax);
     if (toks.length) {
@@ -51,14 +45,29 @@ function extAttrListItems(tokeniser) {
 }
 
 export class ExtendedAttributeParameters extends Base {
+  list!: Argument[] | WrappedToken[];
+  /** Recorded tokens. */
+  tokens!: {
+    assign?: Token;
+    asterisk?: Token;
+    close?: Token;
+    name?: Token;
+    open?: Token;
+    secondaryName?: Token;
+    value?: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating an ExtendedAttributeParameters instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
-    const tokens = { assign: tokeniser.consume("=") };
+  static parse(tokeniser: Tokeniser) {
+    const tokens: Record<string, Token | undefined> = {
+      assign: tokeniser.consume("="),
+    };
     const ret = autoParenter(
       new ExtendedAttributeParameters({ source: tokeniser.source, tokens }),
-    );
+    ) as ExtendedAttributeParameters;
     ret.list = [];
     if (tokens.assign) {
       tokens.asterisk = tokeniser.consume("*");
@@ -83,15 +92,17 @@ export class ExtendedAttributeParameters extends Base {
     return ret.this;
   }
 
+  /** Boolean indicating if right-hand side is a list. */
   get rhsIsList() {
     return (
       this.tokens.assign && !this.tokens.asterisk && !this.tokens.secondaryName
     );
   }
 
+  /** Right-hand side type. */
   get rhsType() {
     if (this.rhsIsList) {
-      return this.list[0].tokens.value.type + "-list";
+      return (this.list as WrappedToken[])[0].tokens.value.type + "-list";
     }
     if (this.tokens.asterisk) {
       return "*";
@@ -102,17 +113,20 @@ export class ExtendedAttributeParameters extends Base {
     return null;
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer): string {
     const { rhsType } = this;
     return w.ts.wrap([
       w.token(this.tokens.assign),
       w.token(this.tokens.asterisk),
-      w.reference_token(this.tokens.secondaryName, this.parent),
+      w.reference_token(this.tokens.secondaryName, this.parent as Base),
       w.token(this.tokens.open),
       ...this.list.map((p) => {
         return rhsType === "identifier-list"
-          ? w.identifier(p, this.parent)
+          ? w.identifier(p as WrappedToken, this.parent as Base)
           : p.write(w);
       }),
       w.token(this.tokens.close),
@@ -121,10 +135,22 @@ export class ExtendedAttributeParameters extends Base {
 }
 
 export class SimpleExtendedAttribute extends Base {
+  /** Object type. */
+  readonly type = "extended-attribute";
+
+  /** Recorded tokens. */
+  tokens!: {
+    name: Token;
+    separator?: Token;
+  };
+  /** Extended attribute parameters. */
+  params!: ExtendedAttributeParameters;
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating an SimpleExtendedAttribute instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
+  static parse(tokeniser: Tokeniser) {
     const name = tokeniser.consumeKind("identifier");
     if (name) {
       return new SimpleExtendedAttribute({
@@ -135,18 +161,32 @@ export class SimpleExtendedAttribute extends Base {
     }
   }
 
-  constructor({ source, tokens, params }) {
+  /**
+   * @param opts - SimpleExtendedAttribute options.
+   * @param opts.source - All tokens for the current input.
+   * @param opts.tokens - Required tokens.
+   * @param opts.params - Extended attribute parameters.
+   */
+  constructor({
+    source,
+    tokens,
+    params,
+  }: {
+    source: Token[];
+    tokens: Record<string, Token | undefined>;
+    params: ExtendedAttributeParameters;
+  }) {
     super({ source, tokens });
     params.parent = this;
     Object.defineProperty(this, "params", { value: params });
   }
 
-  get type() {
-    return "extended-attribute";
-  }
+  /** The extended attribute's name. */
   get name() {
-    return this.tokens.name.value;
+    return this.tokens.name?.value;
   }
+
+  /** The right-hand side type and value. */
   get rhs() {
     const { rhsType: type, tokens, list } = this.params;
     if (!type) {
@@ -154,20 +194,26 @@ export class SimpleExtendedAttribute extends Base {
     }
     const value = this.params.rhsIsList
       ? list
-      : this.params.tokens.secondaryName
+      : tokens.secondaryName
         ? unescape(tokens.secondaryName.value)
         : null;
     return { type, value };
   }
+
+  /** The right-hand side arguments (if any). */
   get arguments() {
     const { rhsIsList, list } = this.params;
     if (!list || rhsIsList) {
       return [];
     }
-    return list;
+    return list as Argument[];
   }
 
-  *validate(defs) {
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     const { name } = this;
     if (name === "LegacyNoInterfaceObject") {
       const message = `\`[LegacyNoInterfaceObject]\` extended attribute is an \
@@ -196,8 +242,11 @@ information.`;
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     return w.ts.wrap([
       w.ts.trivia(this.tokens.name.trivia),
       w.ts.extendedAttribute(
@@ -211,13 +260,15 @@ information.`;
   }
 }
 
-/**
- * @param {SimpleExtendedAttribute} extAttr
- */
-function renameLegacyExtendedAttribute(extAttr) {
+function renameLegacyExtendedAttribute(extAttr: SimpleExtendedAttribute) {
   return () => {
     const { name } = extAttr;
-    extAttr.tokens.name.value = renamedLegacies.get(name);
+    const updatedName = renamedLegacies.get(name);
+    if (!updatedName) {
+      throw new Error("Unable to find a match for legacy attribute!");
+    }
+
+    extAttr.tokens.name.value = updatedName;
     if (name === "TreatNullAs") {
       extAttr.params.tokens = {};
     }
@@ -226,17 +277,24 @@ function renameLegacyExtendedAttribute(extAttr) {
 
 // Note: we parse something simpler than the official syntax. It's all that ever
 // seems to be used
-export class ExtendedAttributes extends ArrayBase {
+export class ExtendedAttributes extends ArrayBase<SimpleExtendedAttribute> {
+  /** Recorded tokens. */
+  tokens!: {
+    close?: Token;
+    open?: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating an ExtendedAttributes instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
-    const tokens = {};
+  static parse(tokeniser: Tokeniser) {
+    const tokens: Record<string, Token | undefined> = {};
     tokens.open = tokeniser.consume("[");
     const ret = new ExtendedAttributes({ source: tokeniser.source, tokens });
     if (!tokens.open) return ret;
     ret.push(
-      ...list(tokeniser, {
+      ...list<SimpleExtendedAttribute>(tokeniser, {
         parser: SimpleExtendedAttribute.parse,
         listName: "extended attribute",
       }),
@@ -258,14 +316,21 @@ export class ExtendedAttributes extends ArrayBase {
     return ret;
   }
 
-  *validate(defs) {
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     for (const extAttr of this) {
       yield* extAttr.validate(defs);
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     if (!this.length) return "";
     return w.ts.wrap([
       w.token(this.tokens.open),

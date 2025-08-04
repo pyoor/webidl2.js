@@ -1,32 +1,60 @@
-import { validationError } from "../error.js";
+import { validationError, WebIDLErrorData } from "../error";
 import {
   idlTypeIncludesDictionary,
   idlTypeIncludesEnforceRange,
-} from "../validators/helpers.js";
-import { Base } from "./base.js";
+} from "../validators/helpers";
+import { Base } from "./base";
 import {
   type_with_extended_attributes,
   unescape,
   autoParenter,
-} from "./helpers.js";
+} from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { ExtendedAttributes } from "./extended-attributes";
+import { Type } from "./type";
 
 export class Attribute extends Base {
+  /** Object type. */
+  readonly type = "attribute";
+
+  /** An IDL Type for the attribute. */
+  idlType!: Type;
+  /** Recorded tokens. */
+  tokens!: {
+    base: Token;
+    name: Token;
+    readonly: Token;
+    special: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
-   * @param {object} [options]
-   * @param {import("../tokeniser.js").Token} [options.special]
-   * @param {boolean} [options.noInherit]
-   * @param {boolean} [options.readonly]
+   * Factory function for creating an Attribute instance.
+   * @param tokeniser - Tokeniser instance.
+   * @param opts - Attribute parse options.
+   * @param [opts.special] - Token for nameless members.
+   * @param [opts.noInherit] - No inherit flag/
+   * @param [opts.readonly] - Readonly flag.
    */
   static parse(
-    tokeniser,
-    { special, noInherit = false, readonly = false } = {},
+    tokeniser: Tokeniser,
+    {
+      special,
+      noInherit = false,
+      readonly = false,
+    }: {
+      special?: Token;
+      noInherit?: boolean;
+      readonly?: boolean;
+    } = {},
   ) {
     const start_position = tokeniser.position;
-    const tokens = { special };
+    const tokens: Record<string, Token | undefined> = { special };
     const ret = autoParenter(
       new Attribute({ source: tokeniser.source, tokens }),
-    );
+    )!;
     if (!special && !noInherit) {
       tokens.special = tokeniser.consume("inherit");
     }
@@ -55,25 +83,36 @@ export class Attribute extends Base {
     return ret.this;
   }
 
-  get type() {
-    return "attribute";
-  }
+  /** Special modifier if exists */
   get special() {
     if (!this.tokens.special) {
       return "";
     }
     return this.tokens.special.value;
   }
+
+  /** True if it's a read-only attribute. */
   get readonly() {
     return !!this.tokens.readonly;
   }
+
+  /** The attribute's name. */
   get name() {
     return unescape(this.tokens.name.value);
   }
 
-  *validate(defs) {
-    yield* this.extAttrs.validate(defs);
-    yield* this.idlType.validate(defs);
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
+    if (this.extAttrs) {
+      yield* this.extAttrs.validate(defs);
+    }
+
+    if (this.idlType) {
+      yield* this.idlType.validate(defs);
+    }
 
     if (["sequence", "record"].includes(this.idlType.generic)) {
       const message = `Attributes cannot accept ${this.idlType.generic} types.`;
@@ -97,7 +136,7 @@ export class Attribute extends Base {
 
     if (this.readonly) {
       if (idlTypeIncludesEnforceRange(this.idlType, defs)) {
-        const targetToken = this.idlType.tokens.base;
+        const targetToken = this.idlType.tokens.base as Token;
         const message =
           "Readonly attributes cannot accept [EnforceRange] extended attribute.";
         yield validationError(targetToken, this, "attr-invalid-type", message);
@@ -105,12 +144,15 @@ export class Attribute extends Base {
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     const { parent } = this;
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         w.token(this.tokens.special),
         w.token(this.tokens.readonly),
         w.token(this.tokens.base),

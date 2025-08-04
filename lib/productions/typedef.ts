@@ -1,18 +1,40 @@
-import { Base } from "./base.js";
+import { Base } from "./base";
 import {
   type_with_extended_attributes,
   unescape,
   autoParenter,
-} from "./helpers.js";
+} from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { ExtendedAttributes } from "./extended-attributes";
+import { WebIDLErrorData } from "../error";
+import { Type } from "./type";
 
 export class Typedef extends Base {
+  /** Object type. */
+  readonly type = "typedef";
+
+  /** A list of extended attributes. */
+  extAttrs!: ExtendedAttributes;
+  /** An IDL Type for the typedef. */
+  idlType!: Type;
+  /** Recorded tokens. */
+  tokens!: {
+    base: Token;
+    name: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Create a new Typedef instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
-    /** @type {Base["tokens"]} */
-    const tokens = {};
-    const ret = autoParenter(new Typedef({ source: tokeniser.source, tokens }));
+  static parse(tokeniser: Tokeniser) {
+    const tokens: Record<string, Token | undefined> = {};
+    const ret = autoParenter(
+      new Typedef({ source: tokeniser.source, tokens }),
+    )!;
     tokens.base = tokeniser.consume("typedef");
     if (!tokens.base) {
       return;
@@ -30,19 +52,24 @@ export class Typedef extends Base {
     return ret.this;
   }
 
-  get type() {
-    return "typedef";
-  }
+  /** The typedef's name. */
   get name() {
     return unescape(this.tokens.name.value);
   }
 
-  *validate(defs) {
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     yield* this.idlType.validate(defs);
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     return w.ts.definition(
       w.ts.wrap([
         this.extAttrs.write(w),

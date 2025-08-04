@@ -6,20 +6,37 @@
     "node": true,
     "mocha": true
   },
-  "extends": ["eslint:recommended", "plugin:prettier/recommended"],
-  "plugins": ["import"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:prettier/recommended"
+  ],
+  "plugins": [
+    "@typescript-eslint"
+  ],
   "rules": {
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_"
+      }
+    ],
     "eol-last": "error",
-    "import/extensions": ["error", "always"],
     "no-console": "error",
-    "no-constant-condition": ["error", { "checkLoops": false }],
+    "no-constant-condition": [
+      "error",
+      {
+        "checkLoops": false
+      }
+    ],
     "no-eval": "error",
     "no-implied-eval": "error",
     "no-trailing-spaces": "error",
     "prefer-const": "error",
     "semi": "error"
   },
-  "parserOptions": {
-    "sourceType": "module"
-  }
+  "parser": "@typescript-eslint/parser",
+  "root": true
 }

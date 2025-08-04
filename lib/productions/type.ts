@@ -1,21 +1,31 @@
-import { Base } from "./base.js";
+import { Base } from "./base";
 import {
   unescape,
   type_with_extended_attributes,
   return_type,
   primitive_type,
   autoParenter,
-} from "./helpers.js";
-import { stringTypes, typeNameKeywords } from "../tokeniser.js";
-import { validationError } from "../error.js";
-import { idlTypeIncludesDictionary } from "../validators/helpers.js";
-import { ExtendedAttributes } from "./extended-attributes.js";
+} from "./helpers";
+import {
+  stringTypes,
+  Token,
+  Tokeniser,
+  typeNameKeywords,
+} from "../tokeniser";
+import { validationError, WebIDLErrorData } from "../error";
+import { idlTypeIncludesDictionary } from "../validators/helpers";
+import {
+  ExtendedAttributes,
+  SimpleExtendedAttribute,
+} from "./extended-attributes";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { Typedef } from "./typedef";
+import { Argument } from "./argument";
+import { Attribute } from "./attribute";
+import { CallbackFunction } from "./callback";
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {string} typeName
- */
-function generic_type(tokeniser, typeName) {
+function generic_type(tokeniser: Tokeniser, typeName?: string) {
   const base = tokeniser.consume(
     "FrozenArray",
     "ObservableArray",
@@ -28,7 +38,7 @@ function generic_type(tokeniser, typeName) {
   }
   const ret = autoParenter(
     new Type({ source: tokeniser.source, tokens: { base } }),
-  );
+  )!;
   ret.tokens.open =
     tokeniser.consume("<") ||
     tokeniser.error(`No opening bracket after ${base.value}`);
@@ -64,7 +74,7 @@ function generic_type(tokeniser, typeName) {
       keyIdlType.tokens.separator =
         tokeniser.consume(",") ||
         tokeniser.error("Missing comma after record key type");
-      keyIdlType.type = typeName;
+      keyIdlType.type = typeName || null;
       const valueType =
         type_with_extended_attributes(tokeniser, typeName) ||
         tokeniser.error("Error parsing generic type record");
@@ -79,10 +89,7 @@ function generic_type(tokeniser, typeName) {
   return ret.this;
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- */
-function type_suffix(tokeniser, obj) {
+function type_suffix(tokeniser: Tokeniser, obj: Type) {
   const nullable = tokeniser.consume("?");
   if (nullable) {
     obj.tokens.nullable = nullable;
@@ -90,11 +97,7 @@ function type_suffix(tokeniser, obj) {
   if (tokeniser.probe("?")) tokeniser.error("Can't nullable more than once");
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {string} typeName
- */
-function single_type(tokeniser, typeName) {
+function single_type(tokeniser: Tokeniser, typeName?: string) {
   let ret = generic_type(tokeniser, typeName) || primitive_type(tokeniser);
   if (!ret) {
     const base =
@@ -117,15 +120,13 @@ function single_type(tokeniser, typeName) {
   return ret;
 }
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {string} type
- */
-function union_type(tokeniser, type) {
-  const tokens = {};
+function union_type(tokeniser: Tokeniser, type?: string) {
+  const tokens: Record<string, Token | undefined> = {};
   tokens.open = tokeniser.consume("(");
   if (!tokens.open) return;
-  const ret = autoParenter(new Type({ source: tokeniser.source, tokens }));
+  const ret = autoParenter(
+    new Type({ source: tokeniser.source, tokens }),
+  )!;
   ret.type = type || null;
   while (true) {
     const typ =
@@ -153,15 +154,30 @@ function union_type(tokeniser, type) {
 }
 
 export class Type extends Base {
-  /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
-   * @param {string} typeName
-   */
-  static parse(tokeniser, typeName) {
+  extAttrs!: ExtendedAttributes;
+  tokens!: {
+    base: Token;
+    close: Token;
+    nullable: Token;
+    open: Token;
+    prefix: Token;
+    postfix: Token;
+    separator: Token | undefined;
+  };
+  subtype!: Type[];
+  type!: string | null;
+
+  static parse(tokeniser: Tokeniser, typeName?: string) {
     return single_type(tokeniser, typeName) || union_type(tokeniser, typeName);
   }
 
-  constructor({ source, tokens }) {
+  constructor({
+    source,
+    tokens,
+  }: {
+    source: Token[];
+    tokens: Record<string, Token | undefined>;
+  }) {
     super({ source, tokens });
     Object.defineProperty(this, "subtype", { value: [], writable: true });
     this.extAttrs = new ExtendedAttributes({ source, tokens: {} });
@@ -173,12 +189,15 @@ export class Type extends Base {
     }
     return "";
   }
+
   get nullable() {
     return Boolean(this.tokens.nullable);
   }
+
   get union() {
     return Boolean(this.subtype.length) && !this.tokens.base;
   }
+
   get idlType() {
     if (this.subtype.length) {
       return this.subtype;
@@ -191,13 +210,16 @@ export class Type extends Base {
     return unescape(name);
   }
 
-  *validate(defs) {
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     yield* this.extAttrs.validate(defs);
 
     if (this.idlType === "BufferSource") {
       // XXX: For now this is a hack. Consider moving parents' extAttrs into types as the spec says:
       // https://webidl.spec.whatwg.org/#idl-annotated-types
       for (const extAttrs of [this.extAttrs, this.parent?.extAttrs]) {
+        if (!extAttrs) {
+          continue;
+        }
         for (const extAttr of extAttrs) {
           if (extAttr.name !== "AllowShared") {
             continue;
@@ -227,10 +249,10 @@ for more information.`;
      * If a union is nullable, its subunions cannot include a dictionary
      * If not, subunions may include dictionaries if each union is not nullable
      */
-    const typedef = !this.union && defs.unique.get(this.idlType);
+    const typedef = !this.union && defs.unique.get(this.idlType as string);
     const target = this.union
       ? this
-      : typedef && typedef.type === "typedef"
+      : typedef && typedef instanceof Typedef
         ? typedef.idlType
         : undefined;
     if (target && this.nullable) {
@@ -254,8 +276,7 @@ for more information.`;
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  write(w: Writer): string {
     const type_body = () => {
       if (this.union || this.generic) {
         return w.ts.wrap([
@@ -276,9 +297,7 @@ for more information.`;
           w.token(this.tokens.postfix),
         ]),
         {
-          unescaped: /** @type {string} (because it's not union) */ (
-            this.idlType
-          ),
+          unescaped: this.idlType as string,
           context: this,
         },
       );
@@ -294,11 +313,16 @@ for more information.`;
 }
 
 /**
- * @param {Type} type
- * @param {import("./extended-attributes.js").SimpleExtendedAttribute} extAttr
- * @param {ExtendedAttributes} extAttrs
+ * Replaces [AllowShared] with the identifier AllowSharedBufferSource in the given type's tokens.
+ * @param type - Target type.
+ * @param extAttr - Target attribute.
+ * @param extAttrs - Extended attribute container.
  */
-function replaceAllowShared(type, extAttr, extAttrs) {
+function replaceAllowShared(
+  type: Type,
+  extAttr: SimpleExtendedAttribute,
+  extAttrs: ExtendedAttributes,
+) {
   return () => {
     const index = extAttrs.indexOf(extAttr);
     extAttrs.splice(index, 1);
@@ -311,9 +335,10 @@ function replaceAllowShared(type, extAttr, extAttrs) {
 }
 
 /**
- * @param {Type} type
+ * Replaces a value of void with undefined.
+ * @param type - Target type.
  */
-function replaceVoid(type) {
+function replaceVoid(type: Type) {
   return () => {
     type.tokens.base.value = "undefined";
   };

@@ -1,24 +1,49 @@
-import { Base } from "./base.js";
+import { Base } from "./base";
 import {
   return_type,
   argument_list,
   unescape,
   autoParenter,
-} from "./helpers.js";
-import { validationError } from "../error.js";
+} from "./helpers";
+import { validationError, WebIDLErrorData } from "../error";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { Type } from "./type";
+import { Argument } from "./argument";
 
 export class Operation extends Base {
+  /** Object type. */
+  readonly type = "attribute";
+
+  /** An array of arguments for the operation. */
+  arguments!: Argument[];
+  /** An IDL Type for the operation. */
+  idlType!: Type;
+  /** Recorded tokens. */
+  tokens!: {
+    close: Token;
+    name: Token;
+    open: Token;
+    special: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
-   * @param {object} [options]
-   * @param {import("../tokeniser.js").Token} [options.special]
-   * @param {import("../tokeniser.js").Token} [options.regular]
+   * Factory function for creating an Operation instance.
+   * @param tokeniser - Tokeniser instance.
+   * @param opts - Operation parse options.
+   * @param special - Special operation modifier.
+   * @param regular - Boolean indicating if it's a regular operation.
    */
-  static parse(tokeniser, { special, regular } = {}) {
-    const tokens = { special };
+  static parse(
+    tokeniser: Tokeniser,
+    { special, regular }: { special?: Token; regular?: Token } = {},
+  ) {
+    const tokens: Record<string, Token | undefined> = { special };
     const ret = autoParenter(
       new Operation({ source: tokeniser.source, tokens }),
-    );
+    )!;
     if (special && special.value === "stringifier") {
       tokens.termination = tokeniser.consume(";");
       if (tokens.termination) {
@@ -44,9 +69,7 @@ export class Operation extends Base {
     return ret.this;
   }
 
-  get type() {
-    return "operation";
-  }
+  /** The name of the operation. If a stringifier, may be null. */
   get name() {
     const { name } = this.tokens;
     if (!name) {
@@ -54,6 +77,8 @@ export class Operation extends Base {
     }
     return unescape(name.value);
   }
+
+  /** Special modifier if exists */
   get special() {
     if (!this.tokens.special) {
       return "";
@@ -61,8 +86,15 @@ export class Operation extends Base {
     return this.tokens.special.value;
   }
 
-  *validate(defs) {
-    yield* this.extAttrs.validate(defs);
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
+    if (this.extAttrs) {
+      yield* this.extAttrs.validate(defs);
+    }
+
     if (!this.name && ["", "static"].includes(this.special)) {
       const message = `Regular or static operations must have both a return type and an identifier.`;
       yield validationError(this.tokens.open, this, "incomplete-op", message);
@@ -75,8 +107,11 @@ export class Operation extends Base {
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     const { parent } = this;
     const body = this.idlType
       ? [
@@ -89,7 +124,7 @@ export class Operation extends Base {
       : [];
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         this.tokens.name
           ? w.token(this.tokens.special)
           : w.token(this.tokens.special, w.ts.nameless, { data: this, parent }),

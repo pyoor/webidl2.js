@@ -1,10 +1,15 @@
-import { validationError } from "../error.js";
+import { validationError } from "../error";
+import { Definitions } from "../validator";
+import { Container, Operation } from "../productions/index.js";
 
 /**
  * @param {import("../validator.js").Definitions} defs
  * @param {import("../productions/container.js").Container} i
  */
-export function* checkInterfaceMemberDuplication(defs, i) {
+export function* checkInterfaceMemberDuplication(
+  defs: Definitions,
+  i: Container,
+) {
   const opNames = groupOperationNames(i);
   const partials = defs.partials.get(i.name) || [];
   const mixins = defs.mixinMap.get(i.name) || [];
@@ -24,7 +29,12 @@ export function* checkInterfaceMemberDuplication(defs, i) {
    * @param {import("../productions/container.js").Container} ext
    * @param {import("../productions/container.js").Container} base
    */
-  function* checkAdditions(additions, existings, ext, base) {
+  function* checkAdditions(
+    additions: Operation[],
+    existings: Set<string>,
+    ext: Container,
+    base: Container,
+  ) {
     for (const addition of additions) {
       const { name } = addition;
       if (name && existings.has(name)) {
@@ -41,17 +51,20 @@ export function* checkInterfaceMemberDuplication(defs, i) {
   }
 
   /**
-   * @param {import("../productions/container.js").Container} i
-   * @returns {import("../productions/operation.js").Operation[]}
+   * Return a list of operations associated with a container.
+   * @param i - Container instance.
    */
-  function getOperations(i) {
-    return i.members.filter(({ type }) => type === "operation");
+  function getOperations(i: Container): Operation[] {
+    return i.members.filter((m): m is Operation => {
+      return "type" in m && m.type === "operation";
+    });
   }
 
   /**
-   * @param {import("../productions/container.js").Container} i
+   * Group operations by type.
+   * @param i - Container instance.
    */
-  function groupOperationNames(i) {
+  function groupOperationNames(i: Container) {
     const ops = getOperations(i);
     return {
       statics: new Set(

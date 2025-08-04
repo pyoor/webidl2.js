@@ -1,33 +1,58 @@
-import { Base } from "./base.js";
+import { Base } from "./base";
 import {
   type_with_extended_attributes,
   autoParenter,
   argument_list,
-} from "./helpers.js";
+} from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { WebIDLErrorData } from "../error";
+import { Type } from "./type";
+import { Argument } from "./argument";
+import { ExtendedAttributes } from "./extended-attributes";
 
 export class IterableLike extends Base {
+  /** An array of arguments for the iterable declaration. */
+  arguments!: Argument[];
+  /** An IDL Type for the iterable-like. */
+  idlType!: Type[];
+  /** Recorded tokens. */
+  tokens!: {
+    argsClose?: Token;
+    argsOpen?: Token;
+    async?: Token;
+    base: Token;
+    close: Token;
+    open: Token;
+    readonly?: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating an Iterable instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
+  static parse(tokeniser: Tokeniser) {
     const start_position = tokeniser.position;
     const ret = autoParenter(
       new IterableLike({ source: tokeniser.source, tokens: {} }),
-    );
+    )!;
     const { tokens } = ret;
     tokens.readonly = tokeniser.consume("readonly");
     if (!tokens.readonly) {
       tokens.async = tokeniser.consume("async");
     }
-    tokens.base = tokens.readonly
+    const base = tokens.readonly
       ? tokeniser.consume("maplike", "setlike")
       : tokens.async
         ? tokeniser.consume("iterable")
         : tokeniser.consume("iterable", "maplike", "setlike");
-    if (!tokens.base) {
+    if (!base) {
       tokeniser.unconsume(start_position);
       return;
     }
+    tokens.base = base;
 
     const { type } = ret;
     const secondTypeRequired = type === "maplike";
@@ -46,7 +71,13 @@ export class IterableLike extends Base {
     if (secondTypeAllowed) {
       first.tokens.separator = tokeniser.consume(",");
       if (first.tokens.separator) {
-        ret.idlType.push(type_with_extended_attributes(tokeniser));
+        const idlType = type_with_extended_attributes(tokeniser);
+        if (!idlType) {
+          tokeniser.error(
+            `Failed to parse first type argument in ${type} declaration`,
+          );
+        }
+        ret.idlType.push();
       } else if (secondTypeRequired) {
         tokeniser.error(`Missing second type argument in ${type} declaration`);
       }
@@ -75,17 +106,26 @@ export class IterableLike extends Base {
     return ret.this;
   }
 
+  /** Object type. */
   get type() {
     return this.tokens.base.value;
   }
+
+  /** True if it's a read-only attribute. */
   get readonly() {
     return !!this.tokens.readonly;
   }
+
+  /** Whether the iterable is declared as async. */
   get async() {
     return !!this.tokens.async;
   }
 
-  *validate(defs) {
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     for (const type of this.idlType) {
       yield* type.validate(defs);
     }
@@ -94,11 +134,14 @@ export class IterableLike extends Base {
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         w.token(this.tokens.readonly),
         w.token(this.tokens.async),
         w.token(this.tokens.base, w.ts.generic),

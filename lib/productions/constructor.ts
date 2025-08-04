@@ -1,17 +1,35 @@
-import { Base } from "./base.js";
-import { argument_list, autoParenter } from "./helpers.js";
+import { Token, Tokeniser } from "../tokeniser";
+import { Base } from "./base";
+import { argument_list, autoParenter } from "./helpers";
+import { Writer } from "../writer";
+import { Argument } from "./argument";
+import { Definitions } from "../validator";
+import { WebIDLErrorData } from "../error";
 
 export class Constructor extends Base {
+  /** Object type. */
+  readonly type = "constructor";
+
+  /** An array of arguments for the constructor operation. */
+  arguments!: Argument[];
+  /** Recorded tokens. */
+  tokens!: {
+    base: Token;
+    close: Token;
+    open: Token;
+    termination: Token;
+  };
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
+   * Factory function for creating a Constructor instance.
+   * @param tokeniser - Tokeniser instance.
    */
-  static parse(tokeniser) {
+  static parse(tokeniser: Tokeniser) {
     const base = tokeniser.consume("constructor");
     if (!base) {
       return;
     }
-    /** @type {Base["tokens"]} */
-    const tokens = { base };
+    const tokens: Record<string, Token | undefined> = { base };
     tokens.open =
       tokeniser.consume("(") ||
       tokeniser.error("No argument list in constructor");
@@ -21,27 +39,32 @@ export class Constructor extends Base {
     tokens.termination =
       tokeniser.consume(";") ||
       tokeniser.error("No semicolon after constructor");
-    const ret = new Constructor({ source: tokeniser.source, tokens });
-    autoParenter(ret).arguments = args;
+    const ret = autoParenter(
+      new Constructor({ source: tokeniser.source, tokens }),
+    )!;
+    ret.arguments = args;
     return ret;
   }
 
-  get type() {
-    return "constructor";
-  }
-
-  *validate(defs) {
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     for (const argument of this.arguments) {
       yield* argument.validate(defs);
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     const { parent } = this;
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         w.token(this.tokens.base, w.ts.nameless, { data: this, parent }),
         w.token(this.tokens.open),
         w.ts.wrap(this.arguments.map((arg) => arg.write(w))),

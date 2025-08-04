@@ -1,11 +1,39 @@
-import { validationError as error } from "./error.js";
+import { validationError as error, WebIDLError } from "./error";
+import { IDLRootNamedType, IDLRootType } from "./webidl2";
+import { Includes } from "./productions/includes";
+import { Mixin } from "./productions/mixin";
+import { Container, Type } from "./productions/index.js";
+import { Typedef } from "./productions/typedef";
+import { Dictionary } from "./productions/dictionary";
 
-function getMixinMap(all, unique) {
-  const map = new Map();
-  const includes = all.filter((def) => def.type === "includes");
+export type TypedefDictionaryReference = {
+  reference: Type;
+  dictionary: Dictionary;
+};
+
+export type Definitions = {
+  all: IDLRootType[];
+  unique: Map<string, IDLRootNamedType>;
+  partials: Map<string, Container[]>;
+  duplicates: Set<IDLRootNamedType>;
+  mixinMap: Map<string, Mixin[]>;
+  cache: {
+    typedefIncludesDictionary: WeakMap<
+      Typedef,
+      TypedefDictionaryReference | undefined
+    >;
+    dictionaryIncludesRequiredField: WeakMap<Dictionary, boolean | undefined>;
+  };
+};
+
+function getMixinMap(all: IDLRootType[], unique: Map<string, IDLRootType>) {
+  const map: Map<string, Mixin[]> = new Map();
+  const includes = all.filter(
+    (def): def is Includes => def.type === "includes",
+  );
   for (const include of includes) {
     const mixin = unique.get(include.includes);
-    if (!mixin) {
+    if (!(mixin instanceof Mixin)) {
       continue;
     }
     const array = map.get(include.target);
@@ -18,15 +46,12 @@ function getMixinMap(all, unique) {
   return map;
 }
 
-/**
- * @typedef {ReturnType<typeof groupDefinitions>} Definitions
- */
-function groupDefinitions(all) {
-  const unique = new Map();
-  const duplicates = new Set();
-  const partials = new Map();
+function groupDefinitions(all: IDLRootType[]): Definitions {
+  const unique: Map<string, IDLRootNamedType> = new Map();
+  const duplicates: Set<IDLRootNamedType> = new Set();
+  const partials: Map<string, Container[]> = new Map();
   for (const def of all) {
-    if (def.partial) {
+    if ("partial" in def) {
       const array = partials.get(def.name);
       if (array) {
         array.push(def);
@@ -35,7 +60,7 @@ function groupDefinitions(all) {
       }
       continue;
     }
-    if (!def.name) {
+    if (!("name" in def)) {
       continue;
     }
     if (!unique.has(def.name)) {
@@ -57,38 +82,32 @@ function groupDefinitions(all) {
   };
 }
 
-function* checkDuplicatedNames({ unique, duplicates }) {
+function* checkDuplicatedNames({
+  unique,
+  duplicates,
+}: {
+  unique: Map<string, IDLRootNamedType>;
+  duplicates: Set<IDLRootNamedType>;
+}) {
   for (const dup of duplicates) {
     const { name } = dup;
     const message = `The name "${name}" of type "${
-      unique.get(name).type
+      unique.get(name)?.type
     }" was already seen`;
     yield error(dup.tokens.name, dup, "no-duplicate", message);
   }
 }
 
-function* validateIterable(ast) {
+function* validateIterable(ast: IDLRootType[]) {
   const defs = groupDefinitions(ast);
   for (const def of defs.all) {
-    if (def.validate) {
+    if ("validate" in def) {
       yield* def.validate(defs);
     }
   }
   yield* checkDuplicatedNames(defs);
 }
 
-// Remove this once all of our support targets expose `.flat()` by default
-function flatten(array) {
-  if (array.flat) {
-    return array.flat();
-  }
-  return [].concat(...array);
-}
-
-/**
- * @param {import("./productions/base.js").Base[]} ast
- * @return {import("./error.js").WebIDLErrorData[]} validation errors
- */
-export function validate(ast) {
-  return [...validateIterable(flatten(ast))];
+export function validate(ast: IDLRootType[]): WebIDLError[] {
+  return [...validateIterable(ast.flat())];
 }

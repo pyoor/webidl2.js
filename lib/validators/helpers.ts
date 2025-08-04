@@ -1,21 +1,23 @@
+import { Definitions, TypedefDictionaryReference } from "../validator";
+import { Type } from "../productions/index.js";
+import { Dictionary } from "../productions/dictionary";
+import { Typedef } from "../productions/typedef";
+
 /**
- * @typedef {import("../validator.js").Definitions} Definitions
- * @typedef {import("../productions/dictionary.js").Dictionary} Dictionary
- * @typedef {import("../../lib/productions/type").Type} Type
- *
- * @param {Type} idlType
- * @param {Definitions} defs
- * @param {object} [options]
- * @param {boolean} [options.useNullableInner] use when the input idlType is nullable and you want to use its inner type
+ * @param idlType - Type instance.
+ * @param defs - All parsed object definitions.
+ * @param opts
+ * @param [opts.useNullableInner]  - Use when the input idlType is nullable,
+ * and you want to use its inner type.
  * @return {{ reference: *, dictionary: Dictionary }} the type reference that ultimately includes dictionary.
  */
 export function idlTypeIncludesDictionary(
-  idlType,
-  defs,
-  { useNullableInner } = {},
-) {
+  idlType: Type,
+  defs: Definitions,
+  { useNullableInner }: { useNullableInner?: boolean } = {},
+): TypedefDictionaryReference | undefined {
   if (!idlType.union) {
-    const def = defs.unique.get(idlType.idlType);
+    const def = defs.unique.get(idlType.idlType as string);
     if (!def) {
       return;
     }
@@ -62,16 +64,21 @@ export function idlTypeIncludesDictionary(
  * @param {Definitions} defs
  * @return {boolean}
  */
-export function dictionaryIncludesRequiredField(dict, defs) {
+export function dictionaryIncludesRequiredField(
+  dict: Dictionary,
+  defs: Definitions,
+): boolean {
   if (defs.cache.dictionaryIncludesRequiredField.has(dict)) {
-    return defs.cache.dictionaryIncludesRequiredField.get(dict);
+    return defs.cache.dictionaryIncludesRequiredField.get(dict) || false;
   }
-  // Set cached result to indeterminate to short-circuit circular definitions.
+  // Set cached result too indeterminate to short-circuit circular definitions.
   // The final result will be updated to true or false.
   defs.cache.dictionaryIncludesRequiredField.set(dict, undefined);
   let result = dict.members.some((field) => field.required);
   if (!result && dict.inheritance) {
-    const superdict = defs.unique.get(dict.inheritance);
+    const superdict = defs.unique.get(dict.inheritance) as
+      | Dictionary
+      | undefined;
     if (!superdict) {
       // Assume required members in the supertype if it is unknown.
       result = true;
@@ -93,7 +100,7 @@ export function dictionaryIncludesRequiredField(dict, defs) {
  * @param {Type} idlType
  * @param {Definitions} defs
  */
-export function idlTypeIncludesEnforceRange(idlType, defs) {
+export function idlTypeIncludesEnforceRange(idlType: Type, defs: Definitions) {
   if (idlType.union) {
     // TODO: This should ideally be checked too
     return false;
@@ -103,8 +110,8 @@ export function idlTypeIncludesEnforceRange(idlType, defs) {
     return true;
   }
 
-  const def = defs.unique.get(idlType.idlType);
-  if (def?.type !== "typedef") {
+  const def = defs.unique.get(idlType.idlType as string);
+  if (!(def instanceof Typedef)) {
     return false;
   }
 

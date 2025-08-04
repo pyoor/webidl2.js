@@ -1,24 +1,39 @@
-import { Container } from "./container.js";
-import { Attribute } from "./attribute.js";
-import { Operation } from "./operation.js";
-import { validationError } from "../error.js";
-import { autofixAddExposedWindow } from "./helpers.js";
-import { Constant } from "./constant.js";
+import { AllowedMember, Container } from "./container";
+import { Attribute } from "./attribute";
+import { Operation } from "./operation";
+import { validationError, WebIDLErrorData } from "../error";
+import { autofixAddExposedWindow } from "./helpers";
+import { Constant } from "./constant";
+import { Token, Tokeniser } from "../tokeniser";
+import { Definitions } from "../validator";
 
 export class Namespace extends Container {
+  /** Object type. */
+  readonly type = "namespace";
+
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
-   * @param {object} [options]
-   * @param {import("./container.js").AllowedMember[]} [options.extMembers]
-   * @param {import("../tokeniser.js").Token} [options.partial]
+   * Factory function for creating a Namespace instance.
+   * @param tokeniser - Tokeniser instance.
+   * @param opts - Namespace parse options.
+   * @param opts.extMembers - Array of factory functions for non-standard members.
+   * @param opts.partial - A boolean indicating whether this Dictionary is partial.
    */
-  static parse(tokeniser, { extMembers = [], partial } = {}) {
-    const tokens = { partial };
+  static parse(
+    tokeniser: Tokeniser,
+    {
+      extMembers = [],
+      partial,
+    }: {
+      extMembers?: AllowedMember[];
+      partial?: Token;
+    } = {},
+  ) {
+    const tokens: Record<string, Token | undefined> = { partial };
     tokens.base = tokeniser.consume("namespace");
     if (!tokens.base) {
       return;
     }
-    return Container.parse(
+    return Container._parse(
       tokeniser,
       new Namespace({ source: tokeniser.source, tokens }),
       {
@@ -32,13 +47,14 @@ export class Namespace extends Container {
     );
   }
 
-  get type() {
-    return "namespace";
-  }
-
-  *validate(defs) {
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     if (
       !this.partial &&
+      this.extAttrs &&
       this.extAttrs.every((extAttr) => extAttr.name !== "Exposed")
     ) {
       const message = `Namespaces must have [Exposed] extended attribute. \

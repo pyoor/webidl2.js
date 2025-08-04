@@ -1,11 +1,19 @@
-import { Base } from "./base.js";
-import { ExtendedAttributes } from "./extended-attributes.js";
-import { unescape, autoParenter } from "./helpers.js";
+import { Base } from "./base";
+import { ExtendedAttributes } from "./extended-attributes";
+import { autoParenter, unescape } from "./helpers";
+import { Token, Tokeniser } from "../tokeniser";
+import { Writer } from "../writer";
+import { Definitions } from "../validator";
+import { WebIDLErrorData } from "../error";
 
-/**
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- */
-function inheritance(tokeniser) {
+export type ParserCallback = (
+  tokeniser: Tokeniser,
+  options?: object,
+) => Base | undefined;
+
+export type AllowedMember = [ParserCallback, object?];
+
+function inheritance(tokeniser: Tokeniser) {
   const colon = tokeniser.consume(":");
   if (!colon) {
     return {};
@@ -16,32 +24,51 @@ function inheritance(tokeniser) {
   return { colon, inheritance };
 }
 
-/**
- * Parser callback.
- * @callback ParserCallback
- * @param {import("../tokeniser.js").Tokeniser} tokeniser
- * @param {...*} args
- */
+export abstract class Container extends Base {
+  /** The container type. */
+  abstract get type(): string;
 
-/**
- * A parser callback and optional option object.
- * @typedef AllowedMember
- * @type {[ParserCallback, object?]}
- */
+  /** The container's members. */
+  members!: Base[];
+  /** Recorded tokens. */
+  tokens!: {
+    base: Token;
+    callback: Token;
+    close?: Token;
+    colon: Token;
+    inheritance: Token;
+    mixin: Token;
+    name: Token;
+    open: Token;
+    partial?: Token;
+    termination: Token;
+  };
 
-export class Container extends Base {
   /**
-   * @param {import("../tokeniser.js").Tokeniser} tokeniser
-   * @param {*} instance TODO: This should be {T extends Container}, but see https://github.com/microsoft/TypeScript/issues/4628
-   * @param {*} args
+   * Factory function for creating a _parse instance.
+   * @param tokeniser - Tokeniser instance.
+   * @param instance - Extended type instance.
+   * @param opts - Container parse options.
+   * @param opts.inheritable - Flag indicating if type can be inherited.
+   * @param opts.allowedMembers - Array of factory functions for supported members.
    */
-  static parse(tokeniser, instance, { inheritable, allowedMembers }) {
+  static _parse<T extends Container>(
+    tokeniser: Tokeniser,
+    instance: T,
+    {
+      inheritable,
+      allowedMembers = [],
+    }: {
+      inheritable?: boolean;
+      allowedMembers?: AllowedMember[];
+    } = {},
+  ): T {
     const { tokens, type } = instance;
     tokens.name =
       tokeniser.consumeKind("identifier") ||
       tokeniser.error(`Missing name in ${type}`);
     tokeniser.current = instance;
-    instance = autoParenter(instance);
+    instance = autoParenter(instance)!;
     if (inheritable) {
       Object.assign(tokens, inheritance(tokeniser));
     }
@@ -56,7 +83,7 @@ export class Container extends Base {
         return instance.this;
       }
       const ea = ExtendedAttributes.parse(tokeniser);
-      let mem;
+      let mem: Base | undefined;
       for (const [parser, ...args] of allowedMembers) {
         mem = autoParenter(parser(tokeniser, ...args));
         if (mem) {
@@ -71,12 +98,17 @@ export class Container extends Base {
     }
   }
 
+  /** A boolean indicating whether this container is partial. */
   get partial() {
     return !!this.tokens.partial;
   }
+
+  /** The container's name. */
   get name() {
     return unescape(this.tokens.name.value);
   }
+
+  /** A string giving the name of an interface this one inherits from, null otherwise. */
   get inheritance() {
     if (!this.tokens.inheritance) {
       return null;
@@ -84,16 +116,21 @@ export class Container extends Base {
     return unescape(this.tokens.inheritance.value);
   }
 
-  *validate(defs) {
+  /**
+   * Validate the object.
+   * @param defs - All parsed object definitions.
+   */
+  *validate(defs: Definitions): Generator<WebIDLErrorData> {
     for (const member of this.members) {
-      if (member.validate) {
-        yield* member.validate(defs);
-      }
+      yield* member.validate(defs);
     }
   }
 
-  /** @param {import("../writer.js").Writer} w */
-  write(w) {
+  /**
+   * Convert the object to WebIDL.
+   * @param w - Writer instance.
+   */
+  write(w: Writer) {
     const inheritance = () => {
       if (!this.tokens.inheritance) {
         return "";
@@ -102,14 +139,16 @@ export class Container extends Base {
         w.token(this.tokens.colon),
         w.ts.trivia(this.tokens.inheritance.trivia),
         w.ts.inheritance(
-          w.reference(this.tokens.inheritance.value, { context: this }),
+          w.reference(this.tokens.inheritance.value, {
+            context: this,
+          }),
         ),
       ]);
     };
 
     return w.ts.definition(
       w.ts.wrap([
-        this.extAttrs.write(w),
+        this.extAttrs ? this.extAttrs.write(w) : "",
         w.token(this.tokens.callback),
         w.token(this.tokens.partial),
         w.token(this.tokens.base),
